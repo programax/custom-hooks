@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 const useApi = (url, _options) => {
     const [isLoading, setIsLoading] = useState(true);
-    const [data, setData] = useState(null);
+    const [data, setData] = useState([]);
     const [error, setError] = useState('');
 
     const doFetch = async (options = _options) => {
