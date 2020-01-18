@@ -1,7 +1,5 @@
 import { useState } from "react";
 
-const defaultValidation = () => {};
-
 const getFieldValue = ({ target }, defaultValue) => {
     if (!target) {
         return defaultValue;
@@ -18,102 +16,133 @@ const getFieldName = (event) => {
     return event.target ? event.target.name : event;
 };
 
-const getFieldError = (name, value, validations, validate) => {
-    return validations[name](value) || validate(value);
+const getFieldValues = (fields) => {
+    return Object.keys(fields).reduce((values, key) => {
+        values[key] = fields[key].value;
+
+        return values;
+    }, {});
 };
 
-const useForm = ({ init, validate = defaultValidation }) => {
+const getFieldError = (name, value, fields) => {
+    return fields[name].validation ? fields[name].validation(value, getFieldValues(fields)) : null;
+};
+
+const getFormErrors = (validate, fields) => {
+    return validate ? validate(getFieldValues(fields)) : {};
+};
+
+const getInitialFields = (originalFields) => {
+    const newFields = Object.keys(originalFields).reduce((fields, key) => {
+        const field = originalFields[key];
+        const isFullField = typeof field !== 'string' && Object.keys(field).length > 0;
+
+        if (isFullField) {
+            fields[key] = {
+                value: field.value,
+                error: field.error,
+                validation: field.validation,
+            };
+        } else {
+            fields[key] = {
+                value: field,
+                error: null,
+                validation: null,
+            };
+        }
+
+        return fields;
+    }, {});
+
+    return newFields;
+};
+
+const getValidatedForm = (name, value, fields, validate) => {
+    let newFields = { ...fields };
+    const error = getFieldError(name, value, newFields);
+
+    if (error && error !== fields[name].error) {
+        newFields = {
+            ...newFields,
+            [name]: {
+                ...fields[name],
+                error,
+            },
+        };
+    } else if (!error && fields[name].error) {
+        newFields = {
+            ...newFields,
+            [name]: {
+                ...fields[name],
+                error: null,
+            },
+        };
+    }
+
+    const updatedFields = {
+        ...newFields,
+        [name]: { ...newFields[name], value },
+    };
+    const errors = getFormErrors(validate, updatedFields);
+    const errorKeys = Object.keys(errors);
+    const hasErrors = Boolean(error || errorKeys.length);
+
+    for(const key of errorKeys) {
+        newFields[key] = {
+            ...newFields[key],
+            error: errors[key],
+        };
+    }
+
+    return {
+        hasErrors,
+        newFields,
+    };
+};
+
+const useForm = ({ init, validate }) => {
     const [isReady, setIsReady] = useState(false);
     const [isValid, setIsValid] = useState(true);
-    const [values, setValues] = useState({});
-    const [errors, setErrors] = useState({});
-    const [touched, setTouched] = useState({});
-    const [validations, setValidations] = useState({});
+    const [fields, setFields] = useState({});
 
-    const addField = (name, value, validate = defaultValidation) => {
-        setValues({ ...values, [name]: value });
-        setErrors({ ...errors, [name]: null });
-        setTouched({ ...touched, [name]: false });
-        setValidations({ ...validations, [name]: validate });
+    const addField = (name, value, validation) => {
+        setFields({
+            ...fields,
+            [name]: {
+                value,
+                error: null,
+                validation,
+            },
+        });
     };
 
     const removeField = (name) => {
-        const newValues = { ...values };
-        const newErrors = { ...errors };
-        const newTouched = { ...touched };
-        const newValidations = { ...validations };
-        delete newValues[name];
-        delete newErrors[name];
-        delete newTouched[name];
-        delete newValidations[name];
-        setValues(newValues);
-        setErrors(newErrors);
-        setTouched(newTouched);
-        setValidations(newValidations);
+        const newFields = { ...fields };
+        delete newFields[name];
+        setFields(newFields);
     };
 
-    const initializeForm = (initialFields) => {
-        const result = Object.keys(initialFields).reduce((map, key) => {
-            const field = initialFields[key];
-            const isFullField = typeof field !== 'string' && Object.keys(field).length > 0;
-
-            if (isFullField) {
-                map.values[key] = field.value || '';
-                map.errors[key] = field.error || null;
-                map.touched[key] = field.touched || false;
-                map.validations[key] = field.validation || defaultValidation;
-            } else {
-                map.values[key] = field || '';
-                map.errors[key] = null;
-                map.touched[key] = false;
-                map.validations[key] = defaultValidation;
-            }
-
-            return map;
-        }, { values: {}, errors: {}, touched: {}, validations: {} });
-
-        setValues(result.values);
-        setErrors(result.errors);
-        setTouched(result.touched);
-        setValidations(result.validations);
-    };
-
-    const onChange = (event, val) => {
+    const onFieldChange = (event, defaultValue) => {
         const name = getFieldName(event);
-        const value = getFieldValue(event, val);
-        const error = getFieldError(name, value, validations, validate);
+        const value = getFieldValue(event, defaultValue);
+        const { hasErrors, newFields } = getValidatedForm(name, value, fields, validate);
 
-        if (error && error !== errors[name]) {
-            setErrors({ ...errors, [name]: error });
+        if (hasErrors && isValid) {
             setIsValid(false);
-        } else if (!error && errors[name]) {
-            setErrors({ ...errors, [name]: null });
-
-            // if there is only one error then it is the error we dismissed above so the form is now valid
-            if (Object.keys(errors).length === 1) {
-                setIsValid(true);
-            }
+        } else if (!hasErrors && !isValid) {
+            setIsValid(true);
         }
 
-        setValues({ ...values, [name]: value });
-    };
-
-    const onBlur = (event) => {
-        const name = getFieldName(event);
-        setTouched({ ...touched, [name]: false });
-    };
-
-    const onFocus = (event) => {
-        const name = getFieldName(event);
-        setTouched({ ...touched, [name]: true });
+        setFields({ ...newFields, [name]: { ...newFields[name], value } });
     };
 
     if (!isReady) {
         if (init) {
-            const initialFields = init();
+            const fields = init();
 
-            if (initialFields) {
-                initializeForm(initialFields);
+            if (fields) {
+                const initialFields = getInitialFields(fields);
+                setFields(initialFields);
                 setIsReady(true);
             }
         } else {
@@ -124,42 +153,30 @@ const useForm = ({ init, validate = defaultValidation }) => {
     return {
         isReady,
         isValid,
-        values,
-        errors,
-        touched,
         addField,
         removeField,
-        onChange,
-        onBlur,
-        onFocus,
+        fields,
+        onFieldChange,
         getInput: (name) => ({
             name,
-            value: values[name],
-            onChange,
-            onBlur,
-            onFocus,
+            value: fields[name] ? fields[name].value : null,
+            onChange: onFieldChange,
         }),
         getCheckbox: (name) => ({
             name,
-            checked: values[name],
-            onChange,
-            onBlur,
-            onFocus,
+            checked: fields[name] ? fields[name].value : null,
+            onChange: onFieldChange,
         }),
         getRadio: (name, value) => ({
             name,
             value,
-            checked: values[name] === value,
-            onChange,
-            onBlur,
-            onFocus,
+            checked: fields[name] ? fields[name].value === value : null,
+            onChange: onFieldChange,
         }),
         getSelect: (name) => ({
             name,
-            value: values[name],
-            onChange,
-            onBlur,
-            onFocus,
+            value: fields[name] ? fields[name].value : null,
+            onChange: onFieldChange,
         }),
     };
 };
